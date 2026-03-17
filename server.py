@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from dotenv import load_dotenv
 import firebase_admin
 from firebase_admin import credentials
@@ -156,20 +157,22 @@ async def get_zones(db: Session = Depends(get_db)):
         zones = db.query(Zone).filter(Zone.isActive == True).order_by(Zone.name.asc()).all()
 
         # 2. Fetch Active Reservation Counts
-        reservations = db.query(Reservation).filter(Reservation.status.in_(["booked", "reserved"])).all()
+        stats = db.query(
+            Reservation.zoneId,
+            Reservation.status,
+            func.count(Reservation.id)
+        ).filter(
+            Reservation.status.in_(["booked", "reserved"])
+        ).group_by(
+            Reservation.zoneId,
+            Reservation.status
+        ).all()
 
         stats_map = {}
-        for r in reservations:
-            zone_id = r.zoneId
-            status = r.status
-
+        for zone_id, status, count in stats:
             if zone_id not in stats_map:
                 stats_map[zone_id] = {"reserved": 0, "booked": 0}
-            
-            if status == "reserved":
-                stats_map[zone_id]["reserved"] += 1
-            if status == "booked":
-                stats_map[zone_id]["booked"] += 1
+            stats_map[zone_id][status] = count
 
         response = []
         for zone in zones:

@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -45,13 +46,23 @@ def startReservationCron():
 
 # ================= GET USER BOOKINGS =================
 @reserveRouter.get("/reserve/book")
-def get_user_bookings(userId: str = Query(None), email: str = Query(None), db: Session = Depends(get_db)):
+def get_user_bookings(
+    userId: str = Query(None), 
+    email: str = Query(None), 
+    status: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
     target_id = userId or email
     if not target_id:
         raise HTTPException(status_code=400, detail="userId required")
         
     try:
-        bookings = db.query(Reservation).filter(Reservation.userId == target_id).order_by(Reservation.toTime.desc()).all()
+        query = db.query(Reservation).filter(Reservation.userId == target_id)
+        if status:
+            status_list = [s.strip() for s in status.split(",")]
+            query = query.filter(Reservation.status.in_(status_list))
+            
+        bookings = query.order_by(Reservation.toTime.desc()).all()
         
         # N+1 Optimization: Batch fetch zones
         zone_ids = list(set([b.zoneId for b in bookings]))
@@ -122,18 +133,22 @@ def create_prebook(req: ReservePayload, db: Session = Depends(get_db)):
             raise HTTPException(status_code=409, detail="You already have an active booking or parking in this zone.")
             
         # 2. Capacity Check (Overlap logic from PG: toTime > start AND fromTime < end)
-        potential_overlaps = db.query(Reservation).filter(
+        overlap_stats = db.query(Reservation.status, func.count(Reservation.id)).filter(
             Reservation.zoneId == req.zoneId,
             Reservation.status.in_(["reserved", "booked"]),
             Reservation.toTime > start,
             Reservation.fromTime < end
-        ).all()
+        ).group_by(Reservation.status).all()
         
-        total_reserved = sum(1 for p in potential_overlaps if p.status == 'reserved')
-        total_booked = sum(1 for p in potential_overlaps if p.status == 'booked')
+        total_reserved = 0
+        total_booked = 0
+        for st, count in overlap_stats:
+            if st == "reserved": total_reserved = count
+            elif st == "booked": total_booked = count
+            
         capacity = zone.capacity or 0
         
-        if len(potential_overlaps) >= capacity:
+        if (total_reserved + total_booked) >= capacity:
              raise HTTPException(status_code=409, detail="Zone is fully booked for this time range.")
              
         overall_available = max(0, capacity - total_reserved - total_booked)
@@ -210,16 +225,16 @@ def make_reservation(req: ReservePayload, db: Session = Depends(get_db)):
                 if not overlapsOwn:
                     raise HTTPException(status_code=409, detail="Your reservation time must overlap your pre-booking time window.")
                 
-                potential_overlaps = db.query(Reservation).filter(
+                overlaps_count = db.query(func.count(Reservation.id)).filter(
                     Reservation.zoneId == req.zoneId,
                     Reservation.status.in_(["reserved", "booked"]),
                     Reservation.toTime > start,
                     Reservation.fromTime < end,
                     Reservation.id != existing.id
-                ).all()
+                ).scalar()
                 
                 capacity = zone.capacity or 0
-                if len(potential_overlaps) >= capacity:
+                if overlaps_count >= capacity:
                     raise HTTPException(status_code=409, detail="Zone is fully booked for this time range.")
                     
                 existing.status = "reserved"
@@ -234,15 +249,15 @@ def make_reservation(req: ReservePayload, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=409, detail="You already have an active parking in this zone.")
                 
         # New Reservation Capacity Check
-        potential_overlaps = db.query(Reservation).filter(
+        overlaps_count = db.query(func.count(Reservation.id)).filter(
             Reservation.zoneId == req.zoneId,
             Reservation.status.in_(["reserved", "booked"]),
             Reservation.toTime > start,
             Reservation.fromTime < end
-        ).all()
+        ).scalar()
         
         capacity = zone.capacity or 0
-        if len(potential_overlaps) >= capacity:
+        if overlaps_count >= capacity:
             raise HTTPException(status_code=409, detail="Zone is fully booked for this time range.")
             
         new_res = Reservation(
