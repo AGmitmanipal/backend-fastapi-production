@@ -57,23 +57,26 @@ def get_user_bookings(
         raise HTTPException(status_code=400, detail="userId required")
         
     try:
-        query = db.query(Reservation).filter(Reservation.userId == target_id)
+        query = db.query(
+            Reservation.id,
+            Reservation.userId,
+            Reservation.zoneId,
+            Reservation.fromTime,
+            Reservation.toTime,
+            Reservation.status,
+            Reservation.parkedAt,
+            Reservation.createdAt,
+            Zone.name.label("zoneName")
+        ).outerjoin(Zone, Reservation.zoneId == Zone.id).filter(Reservation.userId == target_id)
+        
         if status:
             status_list = [s.strip() for s in status.split(",")]
             query = query.filter(Reservation.status.in_(status_list))
             
         bookings = query.order_by(Reservation.toTime.desc()).all()
         
-        # N+1 Optimization: Batch fetch zones
-        zone_ids = list(set([b.zoneId for b in bookings]))
-        zone_map = {}
-        if zone_ids:
-            zones = db.query(Zone).filter(Zone.id.in_(zone_ids)).all()
-            zone_map = {z.id: z.name for z in zones}
-            
-        results = []
-        for b in bookings:
-            res = {
+        results = [
+            {
                 "_id": b.id,
                 "userId": b.userId,
                 "zoneId": b.zoneId,
@@ -82,9 +85,10 @@ def get_user_bookings(
                 "status": b.status,
                 "parkedAt": b.parkedAt,
                 "createdAt": b.createdAt,
-                "zoneName": zone_map.get(b.zoneId, "Unknown Zone")
+                "zoneName": b.zoneName if b.zoneName else "Unknown Zone"
             }
-            results.append(res)
+            for b in bookings
+        ]
             
         return results
     except Exception as err:
