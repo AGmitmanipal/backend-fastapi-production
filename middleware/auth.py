@@ -10,12 +10,10 @@ from models.postgres import User
 security = HTTPBearer(auto_error=False)
 
 # Supabase JWT secret — from Project Settings > API > JWT Secret
-# The dashboard shows it base64-encoded; decode it to raw bytes for PyJWT
 _raw_secret = os.getenv("SUPABASE_JWT_SECRET")
-try:
-    SUPABASE_JWT_SECRET = base64.b64decode(_raw_secret + "==") if _raw_secret else None
-except Exception:
-    SUPABASE_JWT_SECRET = _raw_secret.encode() if _raw_secret else None
+
+# Modern Supabase projects use the raw string directly
+SUPABASE_JWT_SECRET = _raw_secret.encode("utf-8") if _raw_secret else None
 
 
 def requireAuth(
