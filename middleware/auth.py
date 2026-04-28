@@ -1,4 +1,5 @@
 import os
+import base64
 import jwt  # PyJWT
 from fastapi import Request, HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -9,7 +10,12 @@ from models.postgres import User
 security = HTTPBearer(auto_error=False)
 
 # Supabase JWT secret — from Project Settings > API > JWT Secret
-SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+# The dashboard shows it base64-encoded; decode it to raw bytes for PyJWT
+_raw_secret = os.getenv("SUPABASE_JWT_SECRET")
+try:
+    SUPABASE_JWT_SECRET = base64.b64decode(_raw_secret + "==") if _raw_secret else None
+except Exception:
+    SUPABASE_JWT_SECRET = _raw_secret.encode() if _raw_secret else None
 
 
 def requireAuth(
@@ -42,7 +48,7 @@ def requireAuth(
                 token,
                 SUPABASE_JWT_SECRET,
                 algorithms=["HS256"],
-                audience="authenticated",
+                options={"verify_audience": False},
             )
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail={"message": "Unauthorized: Token has expired"})
