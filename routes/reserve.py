@@ -50,13 +50,21 @@ def startReservationCron():
 
 # ================= GET USER BOOKINGS =================
 @reserveRouter.get("/reserve/book")
-def get_user_bookings(userId: str = Query(None), email: str = Query(None), db: Session = Depends(get_db)):
-    target_id = userId or email
-    if not target_id:
+def get_user_bookings(userId: str = Query(None), active: bool = Query(False), db: Session = Depends(get_db)):
+    if not userId:
         raise HTTPException(status_code=400, detail="userId required")
         
     try:
-        bookings = db.query(Reservation).filter(Reservation.userId == target_id).order_by(Reservation.toTime.desc()).all()
+        query = db.query(Reservation).filter(Reservation.userId == userId)
+        
+        if active:
+            now = datetime.now(timezone.utc)
+            query = query.filter(
+                Reservation.status.in_(["booked", "reserved"]),
+                Reservation.toTime > now
+            )
+        
+        bookings = query.order_by(Reservation.toTime.desc()).all()
         
         # N+1 Optimization: Batch fetch zones
         zone_ids = list(set([b.zoneId for b in bookings]))
@@ -67,7 +75,7 @@ def get_user_bookings(userId: str = Query(None), email: str = Query(None), db: S
             
         results = []
         for b in bookings:
-            res = {
+            results.append({
                 "_id": b.id,
                 "userId": b.userId,
                 "zoneId": b.zoneId,
@@ -77,8 +85,7 @@ def get_user_bookings(userId: str = Query(None), email: str = Query(None), db: S
                 "parkedAt": b.parkedAt,
                 "createdAt": b.createdAt,
                 "zoneName": zone_map.get(b.zoneId, "Unknown Zone")
-            }
-            results.append(res)
+            })
             
         return results
     except Exception as err:

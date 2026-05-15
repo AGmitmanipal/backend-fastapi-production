@@ -111,10 +111,12 @@ def requireAuth(
 
     uid = decoded_token.get("sub")
     email = decoded_token.get("email")
+    user_metadata = decoded_token.get("user_metadata", {})
+    vehicle_plate = user_metadata.get("vehicle_plate") if isinstance(user_metadata, dict) else None
 
     user = db.query(User).filter(User.uid == uid).first()
     if not user:
-        user = User(uid=uid, email=email)
+        user = User(uid=uid, email=email, vehiclePlate=vehicle_plate)
         db.add(user)
         try:
             db.commit()
@@ -122,6 +124,10 @@ def requireAuth(
         except Exception:
             db.rollback()
             raise HTTPException(status_code=500, detail="Failed to create user record.")
+    elif vehicle_plate and not user.vehiclePlate:
+        # Backfill vehicle plate if it was added later and not yet saved
+        user.vehiclePlate = vehicle_plate
+        db.commit()
 
     request.state.user = user
     return user
