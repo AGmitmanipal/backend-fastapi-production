@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import requests
+import traceback
 import jwt  # PyJWT
 from fastapi import Request, HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -99,14 +100,17 @@ def requireAuth(
     token = credentials.credentials
 
     try:
+        print(f"🔑 Verifying token...")
         decoded_token = _decode_token(token)
+        print(f"🔑 Token verified for sub: {decoded_token.get('sub')}")
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail={"message": "Unauthorized: Token has expired."})
     except jwt.InvalidTokenError as e:
         print(f"🔑 Token Verification Failed: {e}")
         raise HTTPException(status_code=401, detail={"message": "Unauthorized: Invalid token.", "error": str(e)})
     except Exception as e:
-        print(f"🔑 Auth Middleware Error: {e}")
+        print(f"🔑 Auth Middleware Error during decoding: {e}")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail={"message": "Internal Server Authentication Error.", "error": str(e)})
 
     uid = decoded_token.get("sub")
@@ -114,20 +118,27 @@ def requireAuth(
     user_metadata = decoded_token.get("user_metadata", {})
     vehicle_plate = user_metadata.get("vehicle_plate") if isinstance(user_metadata, dict) else None
 
-    user = db.query(User).filter(User.uid == uid).first()
-    if not user:
-        user = User(uid=uid, email=email, vehiclePlate=vehicle_plate)
-        db.add(user)
-        try:
+    print(f"🔑 Fetching/Creating user for uid: {uid}")
+    try:
+        user = db.query(User).filter(User.uid == uid).first()
+        if not user:
+            print(f"🔑 User not found, creating new user for email: {email}")
+            user = User(uid=uid, email=email, vehiclePlate=vehicle_plate)
+            db.add(user)
             db.commit()
             db.refresh(user)
-        except Exception:
-            db.rollback()
-            raise HTTPException(status_code=500, detail="Failed to create user record.")
-    elif vehicle_plate and not user.vehiclePlate:
-        # Backfill vehicle plate if it was added later and not yet saved
-        user.vehiclePlate = vehicle_plate
-        db.commit()
+            print(f"🔑 New user created with id: {user.id}")
+        elif vehicle_plate and not user.vehiclePlate:
+            # Backfill vehicle plate if it was added later and not yet saved
+            print(f"🔑 Backfilling vehicle plate: {vehicle_plate}")
+            user.vehiclePlate = vehicle_plate
+            db.commit()
+            print(f"🔑 Vehicle plate updated")
+    except Exception as e:
+        print(f"🔑 Database error in auth middleware: {e}")
+        traceback.print_exc()
+        db.rollback()
+        raise HTTPException(status_code=500, detail={"message": "Failed to sync user record.", "error": str(e)})
 
     request.state.user = user
     return user
