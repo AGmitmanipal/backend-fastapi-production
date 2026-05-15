@@ -51,44 +51,50 @@ async def init_server():
             print("🟢 Supabase JWT Secret loaded — auth ready")
 
         # Initialize PostgreSQL tables
-        Base.metadata.create_all(bind=engine)
-        print("✅ PostgreSQL initialized")
+        if engine:
+            Base.metadata.create_all(bind=engine)
+            print("✅ PostgreSQL initialized")
+        else:
+            print("❌ PostgreSQL initialization skipped: No database engine found")
         
         # Seed Data
-        with Session(engine) as session:
-            if session.query(Zone).count() == 0:
-                print("🌱 Seeding parking zones...")
-                
-                # Retrieve from environment, fallback to defaults if not provided
-                zone1_poly = json.loads(os.getenv("AB1"))
-                zone2_poly = json.loads(os.getenv("AB3"))
-                zone3_poly = json.loads(os.getenv("AB5"))
-                seed_zones = [
-                    Zone(
-                        name="AB1 Manipal",
-                        capacity=10,
-                        available=10,
-                        isActive=True,
-                        polygon=zone1_poly
-                    ),
-                    Zone(
-                        name="AB3 Manipal",
-                        capacity=18,
-                        available=18,
-                        isActive=True,
-                        polygon=zone2_poly
-                    ),
-                    Zone(
-                        name="AB5 Manipal",
-                        capacity=8,
-                        available=8,
-                        isActive=True,
-                        polygon=zone3_poly
-                    )
-                ]
-                session.add_all(seed_zones)
-                session.commit()
-                print("✅ Seeded parking zones")
+        if engine:
+            with Session(engine) as session:
+                if session.query(Zone).count() == 0:
+                    print("🌱 Seeding parking zones...")
+                    
+                    # Retrieve from environment, fallback to defaults if not provided
+                    zone1_poly = json.loads(os.getenv("AB1"))
+                    zone2_poly = json.loads(os.getenv("AB3"))
+                    zone3_poly = json.loads(os.getenv("AB5"))
+                    seed_zones = [
+                        Zone(
+                            name="AB1 Manipal",
+                            capacity=10,
+                            available=10,
+                            isActive=True,
+                            polygon=zone1_poly
+                        ),
+                        Zone(
+                            name="AB3 Manipal",
+                            capacity=18,
+                            available=18,
+                            isActive=True,
+                            polygon=zone2_poly
+                        ),
+                        Zone(
+                            name="AB5 Manipal",
+                            capacity=8,
+                            available=8,
+                            isActive=True,
+                            polygon=zone3_poly
+                        )
+                    ]
+                    session.add_all(seed_zones)
+                    session.commit()
+                    print("✅ Seeded parking zones")
+        else:
+            print("⚠️ Skipping seeding: No database connection")
 
         # Start cron jobs
         startReservationCron()

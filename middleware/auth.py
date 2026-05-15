@@ -12,8 +12,15 @@ security = HTTPBearer(auto_error=False)
 # Supabase JWT secret — from Project Settings > API > JWT Secret
 _raw_secret = os.getenv("SUPABASE_JWT_SECRET")
 
-# Modern Supabase projects use the raw string directly
-SUPABASE_JWT_SECRET = _raw_secret.encode("utf-8") if _raw_secret else None
+# Supabase secrets are usually base64 encoded. We try to decode it, 
+# but fallback to the raw string if it's not base64.
+try:
+    if _raw_secret and len(_raw_secret) > 40: # Likely base64 if it's the long Supabase secret
+        SUPABASE_JWT_SECRET = base64.b64decode(_raw_secret)
+    else:
+        SUPABASE_JWT_SECRET = _raw_secret.encode("utf-8") if _raw_secret else None
+except Exception:
+    SUPABASE_JWT_SECRET = _raw_secret.encode("utf-8") if _raw_secret else None
 
 
 def requireAuth(
@@ -25,13 +32,9 @@ def requireAuth(
         if not SUPABASE_JWT_SECRET:
             raise HTTPException(
                 status_code=500,
-                detail={
-                    "message": "Server auth is not configured (SUPABASE_JWT_SECRET missing).",
-                    "code": "AUTH_NOT_CONFIGURED"
-                }
+                detail={"message": "Server auth is not configured (SUPABASE_JWT_SECRET missing)."}
             )
 
-        # Token Extraction
         if not credentials or credentials.scheme.lower() != "bearer":
             raise HTTPException(
                 status_code=401,
@@ -42,22 +45,29 @@ def requireAuth(
 
         # Verify Supabase JWT
         try:
+            # We allow both HS256 (standard) and RS256 (some project configs)
             decoded_token = jwt.decode(
                 token,
                 SUPABASE_JWT_SECRET,
-                algorithms=["HS256"],
-                options={"verify_audience": False},
+                algorithms=["HS256", "RS256"],
+                options={"verify_aud": False},
             )
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail={"message": "Unauthorized: Token has expired"})
         except jwt.InvalidTokenError as verifyError:
+            # Diagnostic: Print the header to see what algorithm is being used
+            try:
+                header = jwt.get_unverified_header(token)
+                print(f"🔑 Token Header: {header}")
+            except Exception:
+                pass
             print(f"🔑 Token Verification Failed: {verifyError}")
             raise HTTPException(
                 status_code=401,
                 detail={"message": "Unauthorized: Invalid token", "error": str(verifyError)}
             )
 
-        uid = decoded_token.get("sub")        # Supabase user UUID lives in 'sub'
+        uid = decoded_token.get("sub")
         email = decoded_token.get("email")
 
         # Find or Create User in PostgreSQL
