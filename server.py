@@ -184,6 +184,17 @@ async def get_zones(db: Session = Depends(get_db)):
 app.include_router(bookingRouter, prefix="/api/book", tags=["Booking"], dependencies=[Depends(requireAuth), Depends(requireApprovedUser)])
 app.include_router(reserveRouter, tags=["Reservation"], dependencies=[Depends(requireAuth), Depends(requireApprovedUser)])
 
+# Health check (public) — remove after debugging
+@app.get("/debug-auth")
+def debug_auth():
+    from middleware.auth import SUPABASE_JWT_SECRET, _raw_secret
+    return {
+        "jwt_secret_env_present": bool(_raw_secret),
+        "jwt_secret_processed": bool(SUPABASE_JWT_SECRET),
+        "jwt_secret_length": len(SUPABASE_JWT_SECRET) if SUPABASE_JWT_SECRET else 0,
+        "jwt_secret_type": type(SUPABASE_JWT_SECRET).__name__,
+    }
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 5000))
