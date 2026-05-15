@@ -15,6 +15,11 @@ cron_started = False
 async def expire_reservations_task():
     while True:
         try:
+            if not SessionLocal:
+                print("📅 Cron: Skipping task (Database not initialized)")
+                await asyncio.sleep(300) # Wait 5 mins before checking again
+                continue
+
             db = SessionLocal()
             now = datetime.now(timezone.utc)
             
