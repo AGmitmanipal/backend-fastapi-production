@@ -38,7 +38,7 @@ async def expire_reservations_task():
         except Exception as err:
             print(f"❌ Cron error: {err}")
             
-        await asyncio.sleep(60)
+        await asyncio.sleep(30)
 
 def startReservationCron():
     global cron_started
@@ -285,24 +285,28 @@ def make_reservation(req: ReservePayload, db: Session = Depends(get_db)):
 
 # ================= CANCEL RESERVATION =================
 @reserveRouter.delete("/reserve/{id}")
-def cancel_reservation(id: int, db: Session = Depends(get_db)):
+def cancel_reservation(id: int, userId: str = Query(None), db: Session = Depends(get_db)):
     try:
         doc = db.query(Reservation).filter(Reservation.id == id).with_for_update().first()
         if not doc:
             raise HTTPException(status_code=404, detail="Parking not found")
-            
+
+        # Ownership check
+        if userId and doc.userId != userId:
+            raise HTTPException(status_code=403, detail="You do not own this reservation.")
+
         if doc.status not in ["booked", "reserved"]:
             raise HTTPException(status_code=400, detail=f"Cannot cancel parking with status: {doc.status}")
-            
+
         doc.status = "cancelled"
         db.commit()
-        
+
         return {"message": "Cancelled successfully", "reservationId": id}
-        
+
     except HTTPException:
         db.rollback()
         raise
     except Exception as err:
         db.rollback()
         print(f"❌ Cancel Error: {err}")
-        raise HTTPException(status_code=500, detail="Cancel failed")
+        raise HTTPException(status_code=500, detail="Cancel failed")
