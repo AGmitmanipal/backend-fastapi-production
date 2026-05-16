@@ -7,6 +7,7 @@ import jwt  # PyJWT
 from fastapi import Request, HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from config.database import get_db
 from models.postgres import User
 
@@ -123,17 +124,37 @@ def requireAuth(
         user = db.query(User).filter(User.uid == uid).first()
         if not user:
             print(f"🔑 User not found, creating new user for email: {email}")
-            user = User(uid=uid, email=email, vehiclePlate=vehicle_plate)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            print(f"🔑 New user created with id: {user.id}")
-        elif vehicle_plate and not user.vehiclePlate:
+            try:
+                user = User(uid=uid, email=email, vehiclePlate=vehicle_plate)
+                db.add(user)
+                db.commit()
+                db.refresh(user)
+                print(f"🔑 New user created with id: {user.id}")
+            except IntegrityError:
+                # Email already exists (race condition or UID mismatch) — fetch & heal the existing record
+                db.rollback()
+                print(f"🔑 Email '{email}' already exists (IntegrityError). Fetching existing user and syncing UID.")
+                user = db.query(User).filter(User.email == email).first()
+                if user:
+                    if user.uid != uid:
+                        print(f"🔑 Updating UID from {user.uid} → {uid}")
+                        user.uid = uid
+                    if vehicle_plate and not user.vehiclePlate:
+                        user.vehiclePlate = vehicle_plate
+                    db.commit()
+                    db.refresh(user)
+                    print(f"🔑 User record healed for id: {user.id}")
+                else:
+                    raise HTTPException(status_code=500, detail={"message": "Failed to sync user record: email conflict but user not found."})
+
+        if user and vehicle_plate and not user.vehiclePlate:
             # Backfill vehicle plate if it was added later and not yet saved
             print(f"🔑 Backfilling vehicle plate: {vehicle_plate}")
             user.vehiclePlate = vehicle_plate
             db.commit()
             print(f"🔑 Vehicle plate updated")
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"🔑 Database error in auth middleware: {e}")
         traceback.print_exc()
